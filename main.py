@@ -6,7 +6,6 @@ import pandas as pd
 import os
 import time
 import sys
-from pyngrok import ngrok
 
 
 # 检查关键依赖
@@ -955,4 +954,5 @@ if __name__ == "__main__":
     main()
     # 启动隧道
 public_url = ngrok.connect(8501)
+
 print(f"公网访问地址: {public_url}")
