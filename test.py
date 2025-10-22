@@ -95,15 +95,6 @@ st.markdown("""\
     overflow-y: auto;
     border: 2px solid #DDD;
 }
-.column-section {
-    background: linear-gradient(135deg, #F8F9FA, #E9ECEF);
-    padding: 1.5rem;
-    border-radius: 15px;
-    border: 2px solid #DEE2E6;
-    margin-bottom: 1.5rem;
-    height: 100%;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-}
 .upload-help {
     font-size: 0.8rem;
     color: #666;
@@ -173,6 +164,31 @@ st.markdown("""\
     border: 2px dashed #4CAF50 !important;
     background-color: #F0FFF0 !important;
 }
+/* 紧凑布局样式 */
+.compact-section {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background: #f9f9f9;
+    border-radius: 8px;
+}
+/* 新增：两列布局样式 */
+.two-column-layout {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+.column {
+    flex: 1;
+}
+/* 上传提示样式 */
+.upload-hint {
+    background: linear-gradient(135deg, #E8F5E9, #C8E6C9);
+    padding: 1rem;
+    border-radius: 10px;
+    margin: 0.5rem 0;
+    border-left: 4px solid #4CAF50;
+    font-size: 0.9rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -219,10 +235,18 @@ if 'uploaded_files_cache' not in st.session_state:
     st.session_state.uploaded_files_cache = {}
 if 'learning_answers' not in st.session_state:
     st.session_state.learning_answers = {}
-if 'uploader_keys_phase1' not in st.session_state:
-    st.session_state.uploader_keys_phase1 = {}
-if 'uploader_keys_phase2' not in st.session_state:
-    st.session_state.uploader_keys_phase2 = {}
+# 添加重置计数器
+if 'reset_counter_phase1' not in st.session_state:
+    st.session_state.reset_counter_phase1 = 0
+if 'reset_counter_phase2' not in st.session_state:
+    st.session_state.reset_counter_phase2 = 0
+# 添加步骤标题状态
+if 'step1_title' not in st.session_state:
+    st.session_state.step1_title = "第一步"
+if 'step2_title' not in st.session_state:
+    st.session_state.step2_title = "第二步"
+if 'step3_title' not in st.session_state:
+    st.session_state.step3_title = "第三步"
 
 
 # 自定义数据集类
@@ -263,8 +287,8 @@ class ImprovedAnimalCNN(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(2),
 
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
+            nn.Conv2d(256, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
             nn.ReLU(),
             nn.AdaptiveAvgPool2d((4, 4))
         )
@@ -274,13 +298,13 @@ class ImprovedAnimalCNN(nn.Module):
 
         self.fc_layers = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(self.fc_input_size, 512),
+            nn.Linear(self.fc_input_size, 1024),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(512, 256),
+            nn.Linear(1024, 512),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(256, num_classes)
+            nn.Linear(512, num_classes)
         )
 
     def _get_fc_input_size(self):
@@ -408,26 +432,43 @@ def preprocess_image(image, size=(64, 64)):
     return transform(image)
 
 
-# 改进的上传处理函数 - 提高上传速度
+# 改进的上传处理函数 - 解决重命名后上传问题
 def handle_file_upload(uploaded_files, class_name, idx, phase=1):
     """处理文件上传，优化上传速度"""
     if uploaded_files is not None and len(uploaded_files) > 0:
         # 使用索引而不是类别名称作为缓存键，避免类别名称修改导致的问题
         cache_key = f"phase{phase}_{idx}"
+
+        # 获取当前实际类别名称
+        if phase == 1:
+            if idx < len(st.session_state.class_names_phase1):
+                actual_class_name = st.session_state.class_names_phase1[idx]
+            else:
+                actual_class_name = class_name
+        else:
+            if idx < len(st.session_state.class_names_phase2):
+                actual_class_name = st.session_state.class_names_phase2[idx]
+            else:
+                actual_class_name = class_name
+
+        # 检查是否需要更新
         cached_files = st.session_state.uploaded_files_cache.get(cache_key, [])
         current_files = [uf.name for uf in uploaded_files]
 
-        # 如果上传的文件与缓存不同，或者缓存为空，则更新
-        if current_files != cached_files or not cached_files:
-            # 清空当前类别的图片，避免重复添加
-            if phase == 1:
-                st.session_state.class_images_phase1[class_name] = []
-            else:
-                st.session_state.class_images_phase2[class_name] = []
+        # 如果上传的文件与缓存不同，或者缓存为空，或者类别名称已更改，则更新
+        if (current_files != cached_files or not cached_files or
+                actual_class_name not in (
+                st.session_state.class_images_phase1 if phase == 1 else st.session_state.class_images_phase2)):
 
             # 使用进度条显示上传进度
             progress_bar = st.progress(0)
             status_text = st.empty()
+
+            # 清空当前类别的图片，避免重复添加
+            if phase == 1:
+                st.session_state.class_images_phase1[actual_class_name] = []
+            else:
+                st.session_state.class_images_phase2[actual_class_name] = []
 
             # 批量处理图片上传
             total_files = len(uploaded_files)
@@ -436,9 +477,9 @@ def handle_file_upload(uploaded_files, class_name, idx, phase=1):
                     # 快速打开图片并转换为RGB
                     image = Image.open(uploaded_file).convert('RGB')
                     if phase == 1:
-                        st.session_state.class_images_phase1[class_name].append(image)
+                        st.session_state.class_images_phase1[actual_class_name].append(image)
                     else:
-                        st.session_state.class_images_phase2[class_name].append(image)
+                        st.session_state.class_images_phase2[actual_class_name].append(image)
 
                     # 更新进度
                     progress = (i + 1) / total_files
@@ -461,7 +502,7 @@ def handle_file_upload(uploaded_files, class_name, idx, phase=1):
 
 # 项目介绍页面
 if page == "项目介绍":
-    st.markdown('<div class="sub-header">🌿 欢迎，AI研究员！🌿</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">🌿 欢迎，AI研究员！ 🌿</div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns([2, 1])
 
@@ -599,7 +640,7 @@ if page == "项目介绍":
 </div>
 """, unsafe_allow_html=True)
 
-# 第一阶段：物种分类
+# 第一阶段：物种分类 - 改为上下结构
 elif page == "第一阶段：物种分类系统":
     st.markdown('<div class="sub-header">🔍 第一阶段：保护区物种初筛系统</div>', unsafe_allow_html=True)
 
@@ -610,87 +651,110 @@ elif page == "第一阶段：物种分类系统":
 </div>
 """, unsafe_allow_html=True)
 
-    # 使用三列布局 - 调整比例
-    col1, col2, col3 = st.columns([1.2, 1, 1])
+    # 第一部分：训练数据
+    st.markdown(f'<div class="sub-header">📊 {st.session_state.step1_title}</div>', unsafe_allow_html=True)
 
-    # 左侧：训练数据
-    with col1:
-        st.markdown('<div class="column-section">', unsafe_allow_html=True)
-        st.subheader("📊 训练数据")
-
-        st.markdown("""\
+    st.markdown("""\
 <div class="warning-box">
 <strong>注意：</strong> 请为每种动物上传至少5张图片！
 </div>
 """, unsafe_allow_html=True)
 
-        # 类别设置
-        num_classes = st.number_input("动物类别数量", min_value=2, max_value=10, value=3, step=1)
+    # 类别设置 - 修改默认值为2
+    num_classes = st.number_input("动物类别数量", min_value=2, max_value=10, value=2, step=1)
 
-        # 为每个类别创建上传区域
-        class_names = []
-        for i in range(num_classes):
-            # 生成默认类别名称
-            default_name = f"动物{i + 1}"
+    # 使用两列布局显示类别
+    class_names = []
+    for i in range(num_classes):
+        # 生成默认类别名称
+        default_name = f"动物{i + 1}"
 
-            # 检查是否已有类别名称，如果有则使用现有的
-            if i < len(st.session_state.class_names_phase1):
-                default_name = st.session_state.class_names_phase1[i]
+        # 检查是否已有类别名称，如果有则使用现有的
+        if i < len(st.session_state.class_names_phase1):
+            default_name = st.session_state.class_names_phase1[i]
 
-            class_name = st.text_input(f"类别 {i + 1} 名称", value=default_name, key=f"class_name_{i}")
-            class_names.append(class_name)
+        # 每行显示两个类别
+        if i % 2 == 0:  # 偶数索引创建新行
+            cols = st.columns(2)
 
-            # 确保类别在class_images_phase1中
-            if class_name not in st.session_state.class_images_phase1:
-                st.session_state.class_images_phase1[class_name] = []
+        with cols[i % 2]:  # 在当前行的对应列中显示
+            with st.container():
+                st.markdown(f"**类别 {i + 1}**")
+                class_name = st.text_input(f"类别名称", value=default_name, key=f"class_name_{i}")
+                class_names.append(class_name)
 
-            # 文件上传器 - 使用中文提示
-            uploader_key = f"class_uploader_{i}"
-            uploaded_files = st.file_uploader(
-                f"为 '{class_name}' 上传图片（拖拽文件到这里）",
-                type=['jpg', 'jpeg', 'png'],
-                accept_multiple_files=True,
-                key=uploader_key,
-                help="最多可上传200张图片"
-            )
+                # 确保类别在class_images_phase1中
+                if class_name not in st.session_state.class_images_phase1:
+                    st.session_state.class_images_phase1[class_name] = []
 
-            # 使用改进的上传处理 - 传递索引i
-            if handle_file_upload(uploaded_files, class_name, i, phase=1):
-                st.success(f"已为 '{class_name}' 上传 {len(uploaded_files)} 张图片")
+                # 文件上传器 - 使用包含重置计数器的key
+                uploader_key = f"class_uploader_{i}_{st.session_state.reset_counter_phase1}"
 
-            # 显示上传的图片样本
-            if st.session_state.class_images_phase1.get(class_name):
-                st.write(f"**{class_name}** 的图片样本:")
-                cols = st.columns(3)
-                images = st.session_state.class_images_phase1[class_name]
-                for j, image in enumerate(images[:3]):
-                    with cols[j % 3]:
-                        st.image(image, caption=f"样本 {j + 1}", width=100)
+                # 美化的上传提示
+                st.markdown("""\
+<div class="upload-hint">
+📸 <strong>上传图片：</strong> 请点击下方区域选择图片或将图片拖拽到此处
+</div>
+""", unsafe_allow_html=True)
 
-            st.markdown("---")
+                uploaded_files = st.file_uploader(
+                    f"为 '{class_name}' 上传图片",
+                    type=['jpg', 'jpeg', 'png'],
+                    accept_multiple_files=True,
+                    key=uploader_key,
+                    help="支持JPG、JPEG、PNG格式，最多可上传200张图片"
+                )
 
-        # 保存类别名称
-        st.session_state.class_names_phase1 = class_names
+                # 使用改进的上传处理
+                if handle_file_upload(uploaded_files, class_name, i, phase=1):
+                    st.success(f"已为 '{class_name}' 上传 {len(uploaded_files)} 张图片")
 
-        # 显示数据统计
-        if st.session_state.class_images_phase1:
-            st.subheader("📊 数据统计")
+                # 显示上传的图片样本（不显示附件列表）
+                if st.session_state.class_images_phase1.get(class_name):
+                    images = st.session_state.class_images_phase1[class_name]
+                    if len(images) > 0:
+                        st.write(f"已上传 {len(images)} 张图片")
+                        # 只显示前3张缩略图
+                        preview_cols = st.columns(3)
+                        for j, image in enumerate(images[:3]):
+                            with preview_cols[j % 3]:
+                                st.image(image, caption=f"样本 {j + 1}", width=80)
+
+    # 保存类别名称
+    st.session_state.class_names_phase1 = class_names
+
+    # 显示数据统计 - 改为水平布局
+    if st.session_state.class_images_phase1:
+        st.subheader("📊 数据统计")
+
+        # 使用列来水平排列统计信息和警告
+        stat_col, warning_col = st.columns([2, 1])
+
+        with stat_col:
             total_images = 0
+            warning_messages = []
             for class_name in class_names:
                 if class_name in st.session_state.class_images_phase1:
                     count = len(st.session_state.class_images_phase1[class_name])
                     st.write(f"- **{class_name}**: {count} 张图片")
                     total_images += count
+
+                    # 收集警告信息
+                    if count < 5:
+                        warning_messages.append(f"⚠️ '{class_name}' 只有 {count} 张图片，建议至少上传5张")
+                else:
+                    warning_messages.append(f"⚠️ '{class_name}' 只有 0 张图片，建议至少上传5张")
+
             st.write(f"**总计**: {total_images} 张图片")
 
-            # 检查每类是否至少有5张图片
-            for class_name in class_names:
-                if class_name in st.session_state.class_images_phase1:
-                    count = len(st.session_state.class_images_phase1[class_name])
-                    if count < 5:
-                        st.warning(f"⚠️ '{class_name}' 只有 {count} 张图片，建议至少上传5张")
+        with warning_col:
+            # 显示所有警告信息
+            for warning in warning_messages:
+                st.warning(warning)
 
-        # 准备训练数据按钮
+    # 准备训练数据按钮
+    col1, col2 = st.columns(2)
+    with col1:
         if st.button("准备训练数据", type="primary", key="phase1_prepare"):
             if not st.session_state.class_images_phase1:
                 st.error("请先上传训练数据！")
@@ -754,157 +818,132 @@ elif page == "第一阶段：物种分类系统":
                             st.info(f"- 图片尺寸: 64x64")
                             st.info(f"- 批处理大小: 8")
 
-        # 在第一阶段清除数据按钮部分，使用这个更彻底的版本：
+    with col2:
+        # 清除数据按钮 - 彻底清除所有数据
         if st.button("清除所有数据", key="phase1_clear"):
-            # 清除所有第一阶段相关的session_state
-            keys_to_clear = [
-                'class_images_phase1', 'class_names_phase1', 'train_loader_phase1',
-                'model_phase1', 'training_history_phase1', 'trained_phase1'
-            ]
+            # 清除所有图片数据
+            st.session_state.class_images_phase1 = {}
 
-            for key in keys_to_clear:
-                if key in st.session_state:
-                    del st.session_state[key]
+            # 清除类别名称
+            st.session_state.class_names_phase1 = []
+
+            # 清除训练相关数据
+            st.session_state.train_loader_phase1 = None
+            st.session_state.model_phase1 = None
+            st.session_state.training_history_phase1 = None
+            st.session_state.trained_phase1 = False
 
             # 清除第一阶段的所有缓存
             phase1_keys = [k for k in st.session_state.uploaded_files_cache.keys() if k.startswith('phase1_')]
             for key in phase1_keys:
                 del st.session_state.uploaded_files_cache[key]
 
-            # 清除所有第一阶段的上传器状态
+            # 增加重置计数器，强制创建新的文件上传器
+            st.session_state.reset_counter_phase1 += 1
+
+            # 清除所有可能的上传文件相关状态
             for key in list(st.session_state.keys()):
-                if key.startswith('class_uploader_') or key.startswith('class_name_'):
-                    del st.session_state[key]
+                if "file_uploader" in key or "upload" in key.lower():
+                    if not key.startswith("reset_counter"):  # 保留重置计数器
+                        del st.session_state[key]
 
-            st.success("所有数据已清除！")
-            st.experimental_rerun()
+            st.success("所有数据已清除！页面将重新加载...")
+            time.sleep(1)
+            st.rerun()  # 使用rerun确保完全重置
 
-        # 在第二阶段清除数据按钮部分，使用这个更彻底的版本：
-        if st.button("清除所有数据", key="phase2_clear"):
-            # 清除所有第二阶段相关的session_state
-            keys_to_clear = [
-                'class_images_phase2', 'class_names_phase2', 'train_loader_phase2',
-                'model_phase2', 'training_history_phase2', 'trained_phase2'
-            ]
+    # 第二部分：训练模型
+    st.markdown(f'<div class="sub-header">🤖 {st.session_state.step2_title}</div>', unsafe_allow_html=True)
 
-            for key in keys_to_clear:
-                if key in st.session_state:
-                    del st.session_state[key]
+    if not st.session_state.class_images_phase1:
+        st.warning("请先上传训练数据！")
+    else:
+        st.markdown("""\
 
-            # 清除第二阶段的所有缓存
-            phase2_keys = [k for k in st.session_state.uploaded_files_cache.keys() if k.startswith('phase2_')]
-            for key in phase2_keys:
-                del st.session_state.uploaded_files_cache[key]
+""", unsafe_allow_html=True)
 
-            # 清除所有第二阶段的上传器状态
-            for key in list(st.session_state.keys()):
-                if key.startswith('individual_uploader_') or key.startswith('individual_name_'):
-                    del st.session_state[key]
+        # 训练参数设置 - 固定为25轮，不显示滑块
+        st.write("**训练轮次**: 25轮（固定）")
+        epochs = 25
 
-            st.success("所有数据已清除！")
-            st.experimental_rerun()
+        if st.button("开始训练模型", type="primary", key="phase1_train"):
+            if st.session_state.train_loader_phase1 is None:
+                st.error("请先准备训练数据！")
+            else:
+                # 创建模型 - 使用改进的模型
+                num_classes = len(st.session_state.class_names_phase1)
+                model = ImprovedAnimalCNN(num_classes).to(st.session_state.device)
 
-        st.markdown('</div>', unsafe_allow_html=True)
+                # 设置优化器和损失函数 - 使用更小的学习率提高精度
+                optimizer = optim.Adam(model.parameters(), lr=0.0005)
+                criterion = nn.CrossEntropyLoss()
 
-    # 中间：训练模型
-    with col2:
-        st.markdown('<div class="column-section">', unsafe_allow_html=True)
-        st.subheader("🤖 训练模型")
+                # 训练模型
+                with st.spinner("模型训练中，请稍候..."):
+                    history = train_model(
+                        model,
+                        st.session_state.train_loader_phase1,
+                        criterion,
+                        optimizer,
+                        epochs,
+                        st.session_state.device,
+                        phase=1
+                    )
 
-        if not st.session_state.class_images_phase1:
-            st.warning("请先上传训练数据！")
-        else:
-            st.markdown("""\
-<div class="mission-card">
-<h4>改进的CNN模型</h4>
-<p>我们使用改进的卷积神经网络进行物种分类：</p>
-<ul>
-<li>4个卷积层提取更丰富特征</li>
-<li>批归一化加速训练</li>
-<li>Dropout防止过拟合</li>
-<li>自适应池化层</li>
-</ul>
-<p><strong>统一算法：</strong> 与个体识别系统使用相同的改进模型架构</p>
+                # 保存模型和训练历史
+                st.session_state.model_phase1 = model
+                st.session_state.training_history_phase1 = history
+                st.session_state.trained_phase1 = True
+
+                st.success(f"🎉 物种分类模型训练完成！")
+
+        # 提供模型下载
+        if st.session_state.trained_phase1:
+            st.subheader("📥 下载模型")
+            if st.button("下载模型", key="phase1_download"):
+                # 保存模型到字节流
+                buffer = io.BytesIO()
+                torch.save(st.session_state.model_phase1.state_dict(), buffer)
+                buffer.seek(0)
+
+                # 创建下载链接
+                b64 = base64.b64encode(buffer.read()).decode()
+                href = f'<a href="data:application/octet-stream;base64,{b64}" download="species_classifier.pth">下载PyTorch模型文件</a>'
+                st.markdown(href, unsafe_allow_html=True)
+
+    # 第三部分：测试模型
+    st.markdown(f'<div class="sub-header">🔍 {st.session_state.step3_title}</div>', unsafe_allow_html=True)
+
+    if not st.session_state.trained_phase1:
+        st.warning("请先训练模型！")
+    else:
+        # 单张图片预测
+        st.subheader("单张图片预测")
+
+        # 美化的上传提示
+        st.markdown("""\
+<div class="upload-hint">
+📸 <strong>上传测试图片：</strong> 请点击下方区域选择图片或将图片拖拽到此处
 </div>
 """, unsafe_allow_html=True)
 
-            # 训练参数设置 - 固定学习率，不显示选择框
-            epochs = st.slider("训练轮次", 10, 30, 15, key="phase1_epochs")
+        # 上传测试图片 - 使用中文提示
+        test_image = st.file_uploader(
+            "上传测试图片",
+            type=['jpg', 'jpeg', 'png'],
+            key="phase1_test_uploader",
+            help="上传一张未训练过的动物图片进行测试"
+        )
 
-            if st.button("开始训练模型", type="primary", key="phase1_train"):
-                if st.session_state.train_loader_phase1 is None:
-                    st.error("请先准备训练数据！")
-                else:
-                    # 创建模型 - 使用改进的模型
-                    num_classes = len(st.session_state.class_names_phase1)
-                    model = ImprovedAnimalCNN(num_classes).to(st.session_state.device)
+        if test_image and st.session_state.model_phase1 is not None:
+            image = Image.open(test_image).convert('RGB')
 
-                    # 设置优化器和损失函数 - 固定学习率
-                    optimizer = optim.Adam(model.parameters(), lr=0.001)
-                    criterion = nn.CrossEntropyLoss()
+            # 使用两列布局：左侧图片，右侧结果
+            test_col1, test_col2 = st.columns([1, 2])
 
-                    # 训练模型
-                    with st.spinner("模型训练中，请稍候..."):
-                        history = train_model(
-                            model,
-                            st.session_state.train_loader_phase1,
-                            criterion,
-                            optimizer,
-                            epochs,
-                            st.session_state.device,
-                            phase=1
-                        )
-
-                    # 保存模型和训练历史
-                    st.session_state.model_phase1 = model
-                    st.session_state.training_history_phase1 = history
-                    st.session_state.trained_phase1 = True
-
-                    # 不显示训练图表
-                    # fig = plot_training_history(history)
-                    # st.pyplot(fig)
-
-                    st.success(f"🎉 物种分类模型训练完成！")
-
-            # 提供模型下载
-            if st.session_state.trained_phase1:
-                st.subheader("📥 下载模型")
-                if st.button("下载PyTorch模型", key="phase1_download"):
-                    # 保存模型到字节流
-                    buffer = io.BytesIO()
-                    torch.save(st.session_state.model_phase1.state_dict(), buffer)
-                    buffer.seek(0)
-
-                    # 创建下载链接
-                    b64 = base64.b64encode(buffer.read()).decode()
-                    href = f'<a href="data:application/octet-stream;base64,{b64}" download="species_classifier.pth">下载PyTorch模型文件</a>'
-                    st.markdown(href, unsafe_allow_html=True)
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # 右侧：测试模型
-    with col3:
-        st.markdown('<div class="column-section">', unsafe_allow_html=True)
-        st.subheader("🔍 测试模型")
-
-        if not st.session_state.trained_phase1:
-            st.warning("请先训练模型！")
-        else:
-            # 单张图片预测
-            st.subheader("单张图片预测")
-
-            # 上传测试图片 - 使用中文提示
-            test_image = st.file_uploader(
-                "上传测试图片（拖拽文件到这里）",
-                type=['jpg', 'jpeg', 'png'],
-                key="phase1_test_uploader",
-                help="上传一张未训练过的动物图片进行测试"
-            )
-
-            if test_image and st.session_state.model_phase1 is not None:
-                image = Image.open(test_image).convert('RGB')
+            with test_col1:
                 st.image(image, caption="测试图片", width=200)
 
+            with test_col2:
                 if st.button("识别动物", type="primary", key="phase1_predict"):
                     # 预处理图片
                     model = st.session_state.model_phase1
@@ -943,114 +982,168 @@ elif page == "第一阶段：物种分类系统":
                                  unsafe_allow_html=True)
                         st.progress(prob / 100)
 
-        st.markdown('</div>', unsafe_allow_html=True)
+        # 机器学习基本流程总结 - 放在页面最下方
+        st.markdown("---")
+        st.markdown('<div class="sub-header">📊 总结：机器学习的基本过程</div>', unsafe_allow_html=True)
 
-    # 机器学习基本流程总结 - 放在页面最下方
-    st.markdown("---")
-    st.markdown('<div class="sub-header">📊 总结：机器识别的基本流程</div>', unsafe_allow_html=True)
+        # 添加提交按钮和标题更新功能
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
-    col1, col2, col3 = st.columns(3)
+        with col1:
+            step1_input = st.text_input("第一步", value="", key="phase1_step1", placeholder="输入第一步")
+        with col2:
+            step2_input = st.text_input("第二步", value="", key="phase1_step2", placeholder="输入第二步")
+        with col3:
+            step3_input = st.text_input("第三步", value="", key="phase1_step3", placeholder="输入第三步")
+        with col4:
+            st.write("")  # 空行用于对齐
+            st.write("")  # 空行用于对齐
+            if st.button("提交答案", key="submit_steps"):
+                # 检查答案是否正确
+                correct_answers = {
+                    "step1": ["输入数据", "数据输入"],
+                    "step2": ["训练模型", "模型训练"],
+                    "step3": ["测试模型", "验证模型", "模型测试", "模型验证"]
+                }
 
-    with col1:
-        step1 = st.text_input("第一步", value="输入数据", key="phase1_step1")
-    with col2:
-        step2 = st.text_input("第二步", value="训练模型", key="phase1_step2")
-    with col3:
-        step3 = st.text_input("第三步", value="验证模型", key="phase1_step3")
+                step1_correct = step1_input.strip() in correct_answers["step1"]
+                step2_correct = step2_input.strip() in correct_answers["step2"]
+                step3_correct = step3_input.strip() in correct_answers["step3"]
 
-# 第二阶段：个体识别
+                if step1_correct and step2_correct and step3_correct:
+                    st.success("答案正确！标题已更新。")
+                    # 更新session state中的步骤标题
+                    st.session_state.step1_title = "输入数据"
+                    st.session_state.step2_title = "训练模型"
+                    st.session_state.step3_title = "测试模型"
+                else:
+                    st.error("答案不正确，请重新输入。")
+                    # 提供正确答案提示
+                    st.info("**提示：** 正确的三个步骤是：输入数据、训练模型、测试模型（顺序可能不同）")
+
+        # 添加提示
+        st.markdown("""\
+<div class="upload-hint">
+💡 <strong>提示：</strong> 正确的三个步骤是：<strong>输入数据</strong>、<strong>训练模型</strong>、<strong>测试模型</strong>
+</div>
+""", unsafe_allow_html=True)
+
+# 第二阶段：个体识别 - 改为上下结构
 elif page == "第二阶段：个体识别系统":
     st.markdown('<div class="sub-header">🔬 第二阶段：动物个体识别追踪系统</div>', unsafe_allow_html=True)
 
     st.markdown("""\
 <div class="story-box">
 <h3>🐼 新挑战：识别特定个体</h3>
-<p>现在我们发现保护区内每种动物都有多个个体，特别是大熊猫，我们需要知道"这是哪一只熊猫？"</p>
-<p>巡护员很难仅凭肉眼记住每一只熊猫的样子，尤其是在图片模糊、光线不好或只拍到局部的情况下。</p>
+<p>现在我们发现保护区内每种动物都有多个个体，特别是大熊猫，我们需要知道"这是哪一只大熊猫？"</p>
+<p>巡护员很难仅凭肉眼记住每一只大熊猫的样子，尤其是在图片模糊、光线不好或只拍到局部的情况下。</p>
 </div>
 """, unsafe_allow_html=True)
 
-    # 使用三列布局 - 调整比例
-    col1, col2, col3 = st.columns([1.2, 1, 1])
+    # 第一部分：训练数据
+    st.markdown(f'<div class="sub-header">📊 {st.session_state.step1_title}</div>', unsafe_allow_html=True)
 
-    # 左侧：训练数据
-    with col1:
-        st.markdown('<div class="column-section">', unsafe_allow_html=True)
-        st.subheader("📊 个体数据")
-
-        st.markdown("""\
+    st.markdown("""\
 <div class="warning-box">
 <strong>注意：</strong> 请为每个个体上传至少5张图片！
 </div>
 """, unsafe_allow_html=True)
 
-        # 类别设置
-        num_individuals = st.number_input("个体数量", min_value=2, max_value=10, value=3, step=1)
+    # 类别设置 - 修改默认值为2
+    num_individuals = st.number_input("个体数量", min_value=2, max_value=10, value=2, step=1)
 
-        # 为每个个体创建上传区域
-        individual_names = []
-        for i in range(num_individuals):
-            # 生成默认个体名称
-            default_name = f"个体{i + 1}"
+    # 使用两列布局显示个体
+    individual_names = []
+    for i in range(num_individuals):
+        # 生成默认个体名称
+        default_name = f"个体{i + 1}"
 
-            # 检查是否已有个体名称，如果有则使用现有的
-            if i < len(st.session_state.class_names_phase2):
-                default_name = st.session_state.class_names_phase2[i]
+        # 检查是否已有个体名称，如果有则使用现有的
+        if i < len(st.session_state.class_names_phase2):
+            default_name = st.session_state.class_names_phase2[i]
 
-            individual_name = st.text_input(f"个体 {i + 1} 名称", value=default_name, key=f"individual_name_{i}")
-            individual_names.append(individual_name)
+        # 每行显示两个个体
+        if i % 2 == 0:  # 偶数索引创建新行
+            cols = st.columns(2)
 
-            # 确保个体在class_images_phase2中
-            if individual_name not in st.session_state.class_images_phase2:
-                st.session_state.class_images_phase2[individual_name] = []
+        with cols[i % 2]:  # 在当前行的对应列中显示
+            with st.container():
+                st.markdown(f"**个体 {i + 1}**")
+                individual_name = st.text_input(f"个体名称", value=default_name, key=f"individual_name_{i}")
+                individual_names.append(individual_name)
 
-            # 文件上传器 - 使用中文提示
-            uploader_key = f"individual_uploader_{i}"
-            uploaded_files = st.file_uploader(
-                f"为 '{individual_name}' 上传图片（拖拽文件到这里）",
-                type=['jpg', 'jpeg', 'png'],
-                accept_multiple_files=True,
-                key=uploader_key,
-                help="最多可上传200张图片"
-            )
+                # 确保个体在class_images_phase2中
+                if individual_name not in st.session_state.class_images_phase2:
+                    st.session_state.class_images_phase2[individual_name] = []
 
-            # 使用改进的上传处理 - 传递索引i
-            if handle_file_upload(uploaded_files, individual_name, i, phase=2):
-                st.success(f"已为 '{individual_name}' 上传 {len(uploaded_files)} 张图片")
+                # 文件上传器 - 使用包含重置计数器的key
+                uploader_key = f"individual_uploader_{i}_{st.session_state.reset_counter_phase2}"
 
-            # 显示上传的图片样本
-            if st.session_state.class_images_phase2.get(individual_name):
-                st.write(f"**{individual_name}** 的图片样本:")
-                cols = st.columns(3)
-                images = st.session_state.class_images_phase2[individual_name]
-                for j, image in enumerate(images[:3]):
-                    with cols[j % 3]:
-                        st.image(image, caption=f"样本 {j + 1}", width=100)
+                # 美化的上传提示
+                st.markdown("""\
+<div class="upload-hint">
+📸 <strong>上传图片：</strong> 请点击下方区域选择图片或将图片拖拽到此处
+</div>
+""", unsafe_allow_html=True)
 
-            st.markdown("---")
+                uploaded_files = st.file_uploader(
+                    f"为 '{individual_name}' 上传图片",
+                    type=['jpg', 'jpeg', 'png'],
+                    accept_multiple_files=True,
+                    key=uploader_key,
+                    help="支持JPG、JPEG、PNG格式，最多可上传200张图片"
+                )
 
-        # 保存个体名称
-        st.session_state.class_names_phase2 = individual_names
+                # 使用改进的上传处理
+                if handle_file_upload(uploaded_files, individual_name, i, phase=2):
+                    st.success(f"已为 '{individual_name}' 上传 {len(uploaded_files)} 张图片")
 
-        # 显示数据统计
-        if st.session_state.class_images_phase2:
-            st.subheader("📊 数据统计")
+                # 显示上传的图片样本（不显示附件列表）
+                if st.session_state.class_images_phase2.get(individual_name):
+                    images = st.session_state.class_images_phase2[individual_name]
+                    if len(images) > 0:
+                        st.write(f"已上传 {len(images)} 张图片")
+                        # 只显示前3张缩略图
+                        preview_cols = st.columns(3)
+                        for j, image in enumerate(images[:3]):
+                            with preview_cols[j % 3]:
+                                st.image(image, caption=f"样本 {j + 1}", width=80)
+
+    # 保存个体名称
+    st.session_state.class_names_phase2 = individual_names
+
+    # 显示数据统计 - 改为水平布局
+    if st.session_state.class_images_phase2:
+        st.subheader("📊 数据统计")
+
+        # 使用列来水平排列统计信息和警告
+        stat_col, warning_col = st.columns([2, 1])
+
+        with stat_col:
             total_images = 0
+            warning_messages = []
             for individual_name in individual_names:
                 if individual_name in st.session_state.class_images_phase2:
                     count = len(st.session_state.class_images_phase2[individual_name])
                     st.write(f"- **{individual_name}**: {count} 张图片")
                     total_images += count
+
+                    # 收集警告信息
+                    if count < 5:
+                        warning_messages.append(f"⚠️ '{individual_name}' 只有 {count} 张图片，建议至少上传5张")
+                else:
+                    warning_messages.append(f"⚠️ '{individual_name}' 只有 0 张图片，建议至少上传5张")
+
             st.write(f"**总计**: {total_images} 张图片")
 
-            # 检查每个个体是否至少有5张图片
-            for individual_name in individual_names:
-                if individual_name in st.session_state.class_images_phase2:
-                    count = len(st.session_state.class_images_phase2[individual_name])
-                    if count < 5:
-                        st.warning(f"⚠️ '{individual_name}' 只有 {count} 张图片，建议至少上传5张")
+        with warning_col:
+            # 显示所有警告信息
+            for warning in warning_messages:
+                st.warning(warning)
 
-        # 准备训练数据按钮
+    # 准备训练数据按钮
+    col1, col2 = st.columns(2)
+    with col1:
         if st.button("准备训练数据", type="primary", key="phase2_preprocess"):
             if not st.session_state.class_images_phase2:
                 st.error("请先上传个体数据！")
@@ -1115,6 +1208,7 @@ elif page == "第二阶段：个体识别系统":
                             st.info(f"- 图片尺寸: 64x64")
                             st.info(f"- 批处理大小: 8")
 
+    with col2:
         # 清除数据按钮 - 彻底清除所有数据
         if st.button("清除所有数据", key="phase2_clear"):
             # 清除所有图片数据
@@ -1134,117 +1228,112 @@ elif page == "第二阶段：个体识别系统":
             for key in phase2_keys:
                 del st.session_state.uploaded_files_cache[key]
 
-            # 清除上传器状态
-            for i in range(10):  # 假设最多10个个体
-                key = f"individual_uploader_{i}"
-                if key in st.session_state:
-                    del st.session_state[key]
+            # 增加重置计数器，强制创建新的文件上传器
+            st.session_state.reset_counter_phase2 += 1
+
+            # 清除所有可能的上传文件相关状态
+            for key in list(st.session_state.keys()):
+                if "file_uploader" in key or "upload" in key.lower():
+                    if not key.startswith("reset_counter"):  # 保留重置计数器
+                        del st.session_state[key]
 
             st.success("所有数据已清除！页面将重新加载...")
             time.sleep(1)
-            st.rerun()
+            st.rerun()  # 使用rerun确保完全重置
 
-        st.markdown('</div>', unsafe_allow_html=True)
+    # 第二部分：训练模型
+    st.markdown(f'<div class="sub-header">🤖 {st.session_state.step2_title}</div>', unsafe_allow_html=True)
 
-    # 中间：训练模型
-    with col2:
-        st.markdown('<div class="column-section">', unsafe_allow_html=True)
-        st.subheader("🤖 训练模型")
+    if not st.session_state.class_images_phase2:
+        st.warning("请先上传个体数据！")
+    else:
+        st.markdown("""\
 
-        if not st.session_state.class_images_phase2:
-            st.warning("请先上传个体数据！")
-        else:
-            st.markdown("""\
-<div class="mission-card">
-<h4>改进的CNN模型</h4>
-<p>我们使用改进的卷积神经网络进行个体识别：</p>
-<ul>
-<li>4个卷积层提取更细致特征</li>
-<li>批归一化加速训练</li>
-<li>Dropout防止过拟合</li>
-<li>自适应池化层</li>
-</ul>
-<p><strong>统一算法：</strong> 两个阶段使用相同的改进模型架构</p>
+""", unsafe_allow_html=True)
+
+        # 训练参数设置 - 固定为25轮，不显示滑块
+        st.write("**训练轮次**: 25轮（固定）")
+        epochs = 25
+
+        if st.button("开始训练模型", type="primary", key="phase2_train"):
+            if st.session_state.train_loader_phase2 is None:
+                st.error("请先准备训练数据！")
+            else:
+                # 创建模型 - 使用改进的模型
+                num_classes = len(st.session_state.class_names_phase2)
+                model = ImprovedAnimalCNN(num_classes).to(st.session_state.device)
+
+                # 设置优化器和损失函数
+                optimizer = optim.Adam(model.parameters(), lr=0.0005)
+                criterion = nn.CrossEntropyLoss()
+
+                # 训练模型
+                with st.spinner("个体识别模型训练中..."):
+                    history = train_model(
+                        model,
+                        st.session_state.train_loader_phase2,
+                        criterion,
+                        optimizer,
+                        epochs,
+                        st.session_state.device,
+                        phase=2
+                    )
+
+                # 保存模型和训练历史
+                st.session_state.model_phase2 = model
+                st.session_state.training_history_phase2 = history
+                st.session_state.trained_phase2 = True
+
+                st.success(f"🎉 个体识别模型训练完成！")
+
+        # 提供模型下载
+        if st.session_state.trained_phase2:
+            st.subheader("📥 下载模型")
+            if st.button("下载模型", key="phase2_download"):
+                # 保存模型到字节流
+                buffer = io.BytesIO()
+                torch.save(st.session_state.model_phase2.state_dict(), buffer)
+                buffer.seek(0)
+
+                # 创建下载链接
+                b64 = base64.b64encode(buffer.read()).decode()
+                href = f'<a href="data:application/octet-stream;base64,{b64}" download="individual_recognizer.pth">下载PyTorch模型文件</a>'
+                st.markdown(href, unsafe_allow_html=True)
+
+    # 第三部分：测试模型
+    st.markdown(f'<div class="sub-header">🔍 {st.session_state.step3_title}</div>', unsafe_allow_html=True)
+
+    if not st.session_state.trained_phase2:
+        st.warning("请先训练个体识别模型！")
+    else:
+        # 单张图片预测
+        st.subheader("单张图片预测")
+
+        # 美化的上传提示
+        st.markdown("""\
+<div class="upload-hint">
+📸 <strong>上传测试图片：</strong> 请点击下方区域选择图片或将图片拖拽到此处
 </div>
 """, unsafe_allow_html=True)
 
-            # 训练参数设置 - 固定学习率，不显示选择框
-            epochs = st.slider("训练轮次", 15, 40, 25, key="phase2_epochs")
+        # 上传测试图片 - 使用中文提示
+        test_image = st.file_uploader(
+            "上传测试图片",
+            type=['jpg', 'jpeg', 'png'],
+            key="phase2_test_uploader",
+            help="上传一张未训练过的个体图片进行测试"
+        )
 
-            if st.button("开始训练模型", type="primary", key="phase2_train"):
-                if st.session_state.train_loader_phase2 is None:
-                    st.error("请先准备训练数据！")
-                else:
-                    # 创建模型 - 使用改进的模型
-                    num_classes = len(st.session_state.class_names_phase2)
-                    model = ImprovedAnimalCNN(num_classes).to(st.session_state.device)
+        if test_image and st.session_state.model_phase2 is not None:
+            image = Image.open(test_image).convert('RGB')
 
-                    # 设置优化器和损失函数 - 固定学习率
-                    optimizer = optim.Adam(model.parameters(), lr=0.001)
-                    criterion = nn.CrossEntropyLoss()
+            # 使用两列布局：左侧图片，右侧结果
+            test_col1, test_col2 = st.columns([1, 2])
 
-                    # 训练模型
-                    with st.spinner("个体识别模型训练中..."):
-                        history = train_model(
-                            model,
-                            st.session_state.train_loader_phase2,
-                            criterion,
-                            optimizer,
-                            epochs,
-                            st.session_state.device,
-                            phase=2
-                        )
-
-                    # 保存模型和训练历史
-                    st.session_state.model_phase2 = model
-                    st.session_state.training_history_phase2 = history
-                    st.session_state.trained_phase2 = True
-
-                    # 不显示训练图表
-                    # fig = plot_training_history(history)
-                    # st.pyplot(fig)
-
-                    st.success(f"🎉 个体识别模型训练完成！")
-
-            # 提供模型下载
-            if st.session_state.trained_phase2:
-                st.subheader("📥 下载模型")
-                if st.button("下载PyTorch模型", key="phase2_download"):
-                    # 保存模型到字节流
-                    buffer = io.BytesIO()
-                    torch.save(st.session_state.model_phase2.state_dict(), buffer)
-                    buffer.seek(0)
-
-                    # 创建下载链接
-                    b64 = base64.b64encode(buffer.read()).decode()
-                    href = f'<a href="data:application/octet-stream;base64,{b64}" download="individual_recognizer.pth">下载PyTorch模型文件</a>'
-                    st.markdown(href, unsafe_allow_html=True)
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # 右侧：测试模型
-    with col3:
-        st.markdown('<div class="column-section">', unsafe_allow_html=True)
-        st.subheader("🔍 测试模型")
-
-        if not st.session_state.trained_phase2:
-            st.warning("请先训练个体识别模型！")
-        else:
-            # 单张图片预测
-            st.subheader("单张图片预测")
-
-            # 上传测试图片 - 使用中文提示
-            test_image = st.file_uploader(
-                "上传测试图片（拖拽文件到这里）",
-                type=['jpg', 'jpeg', 'png'],
-                key="phase2_test_uploader",
-                help="上传一张未训练过的个体图片进行测试"
-            )
-
-            if test_image and st.session_state.model_phase2 is not None:
-                image = Image.open(test_image).convert('RGB')
+            with test_col1:
                 st.image(image, caption="测试图片", width=200)
 
+            with test_col2:
                 if st.button("识别个体", type="primary", key="phase2_predict"):
                     # 预处理图片
                     model = st.session_state.model_phase2
@@ -1258,22 +1347,22 @@ elif page == "第二阶段：个体识别系统":
                     with torch.no_grad():
                         output = model(image_tensor)
 
-                        # 改进的置信度计算 - 避免过高置信度
-                        # 使用温度缩放来调整置信度分布
-                        temperature = 2.0  # 温度参数，>1会平滑概率分布
-                        scaled_output = output / temperature
-                        probabilities = torch.softmax(scaled_output, dim=1)
+                    # 改进的置信度计算 - 避免过高置信度
+                    # 使用温度缩放来调整置信度分布
+                    temperature = 2.0  # 温度参数，>1会平滑概率分布
+                    scaled_output = output / temperature
+                    probabilities = torch.softmax(scaled_output, dim=1)
 
-                        predicted_class = torch.argmax(probabilities, dim=1).item()
-                        confidence = probabilities[0][predicted_class].item()
+                    predicted_class = torch.argmax(probabilities, dim=1).item()
+                    confidence = probabilities[0][predicted_class].item()
 
-                        # 如果最大概率和第二大概率很接近，降低置信度
-                        sorted_probs, _ = torch.sort(probabilities[0], descending=True)
-                        if len(sorted_probs) > 1:
-                            gap = sorted_probs[0] - sorted_probs[1]
-                            # 如果前两个概率很接近，调整置信度
-                            if gap < 0.3:  # 差距小于30%
-                                confidence = confidence * 0.7  # 降低置信度
+                    # 如果最大概率和第二大概率很接近，降低置信度
+                    sorted_probs, _ = torch.sort(probabilities[0], descending=True)
+                    if len(sorted_probs) > 1:
+                        gap = sorted_probs[0] - sorted_probs[1]
+                        # 如果前两个概率很接近，调整置信度
+                        if gap < 0.3:  # 差距小于30%
+                            confidence = confidence * 0.7  # 降低置信度
 
                     # 显示结果
                     predicted_name = st.session_state.class_names_phase2[predicted_class]
@@ -1299,25 +1388,19 @@ elif page == "第二阶段：个体识别系统":
                                  unsafe_allow_html=True)
                         st.progress(prob / 100)
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
-# 学习单页面 - 根据新的学习单文档完整实现
 # 学习单页面 - 根据新的学习单文档完整实现
 elif page == "学习单":
     st.markdown('<div class="sub-header">📚 《机器学习之动物保护》学习单</div>', unsafe_allow_html=True)
 
     # 学习单内容 - 严格按照新文档格式
     st.markdown("""\
-<div class="learning-sheet">
-<h2>《机器学习之动物保护》学习单</h2>
-</div>
 """, unsafe_allow_html=True)
 
     # 一、学习目标
     st.markdown("""\
 <div class="learning-question">
 <h3>一、学习目标</h3>
-<p>1.理解机器学习概念，掌握机器学习的基本流程。</p>
+<p>1.理解机器学习概念，掌握机器学习的基本过程。</p>
 <p>2.用"动物保护AI识别系统"完成物种分类、个体识别模型，总结数据对人工智能的重要性。</p>
 <p>3.感知 AI 对动物保护的帮助，能举例说明生活中的机器学习应用。</p>
 </div>
@@ -1337,7 +1420,7 @@ elif page == "学习单":
     with col1:
         panda_features = st.text_area("大熊猫",
                                       value=st.session_state.learning_answers.get('panda_features', ''),
-                                      placeholder="填写大熊猫的特征...",
+                                      placeholder="",
                                       height=100,
                                       key="sheet_panda")
         if panda_features:
@@ -1346,7 +1429,7 @@ elif page == "学习单":
     with col2:
         tiger_features = st.text_area("老虎",
                                       value=st.session_state.learning_answers.get('tiger_features', ''),
-                                      placeholder="填写老虎的特征...",
+                                      placeholder="",
                                       height=100,
                                       key="sheet_tiger")
         if tiger_features:
@@ -1355,7 +1438,7 @@ elif page == "学习单":
     with col3:
         monkey_features = st.text_area("金丝猴",
                                        value=st.session_state.learning_answers.get('monkey_features', ''),
-                                       placeholder="填写金丝猴的特征...",
+                                       placeholder="",
                                        height=100,
                                        key="sheet_monkey")
         if monkey_features:
@@ -1371,7 +1454,7 @@ elif page == "学习单":
     st.markdown("""\
 <div class="learning-question">
 <h3>1.机器学习的概念</h3>
-<p>机器学习是让机器_______________________，获得知识与技能，从而感知世界、认识世界的技术。</p>
+<p>机器学习是让机器_________________________，获得知识与技能，从而感知世界、认识世界的技术。</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1387,42 +1470,18 @@ elif page == "学习单":
 <div class="step-box">
 <h3>活动1：探索物种分类模型</h3>
 <h4>1.实践操作</h4>
-<p>打开第一阶段"物种分类系统"，标注3种动物类别并上传动物图片大熊猫_____张、老虎_____张、金丝猴_____张。</p>
+<p>1)打开侧标导航栏，选择第一阶段"物种分类系统"，"第一步"模块</p>
+<p>2)在类别名称栏输入动物名称，并上传"学生素材-活动1-上传数据"中对应的动物图片，上传完成后点击"开始训练数据"</p>
+<p>3)在"第二步"点击"开始训练模型",等待模型训练完成</p>
+<p>4）在"第三步"，上传"学生素材-活动1-测试数据"中的图片，检验识别结果是否正确。</p>
 </div>
 """, unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        panda_count = st.number_input("大熊猫图片数量", min_value=0, max_value=100, value=0, key="sheet_panda_count")
-        st.session_state.learning_answers['panda_count'] = panda_count
-
-    with col2:
-        tiger_count = st.number_input("老虎图片数量", min_value=0, max_value=100, value=0, key="sheet_tiger_count")
-        st.session_state.learning_answers['tiger_count'] = tiger_count
-
-    with col3:
-        monkey_count = st.number_input("金丝猴图片数量", min_value=0, max_value=100, value=0, key="sheet_monkey_count")
-        st.session_state.learning_answers['monkey_count'] = monkey_count
-
-    st.markdown("""\
-<div class="learning-question">
-<p>2.点击 "开始训练模型"，模型会自动提取动物特征。</p>
-<p>用_____张未训练过的新图片测试，□ 能识别个体 □ 不能识别个体</p>
-</div>
-""", unsafe_allow_html=True)
-
-    test_count = st.number_input("测试图片数量", min_value=0, max_value=50, value=0, key="sheet_test_count")
-    can_recognize = st.radio("能否识别个体", ["能识别个体", "不能识别个体"], key="sheet_recognize")
-
-    st.session_state.learning_answers['test_count'] = test_count
-    st.session_state.learning_answers['can_recognize'] = can_recognize
 
     # 总结流程
     st.markdown("""\
 <div class="learning-question">
-<h4>2.总结流程：</h4>
-<p>通过活动1的实践探索，填写<strong>机器识别的基本流程</strong>：</p>
+<h4>2.总结过程：</h4>
+<p>通过活动1的实践探索，填写<strong>机器学习的基本过程：</strong></p>
 <p><strong>输入数据</strong></p>
 <p><strong>训练模型</strong></p>
 <p><strong>验证模型</strong></p>
@@ -1432,19 +1491,34 @@ elif page == "学习单":
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        step1 = st.text_input("第一步", value="", key="sheet_step1")
+        step1 = st.text_input("第一步",
+                             value=st.session_state.learning_answers.get('step1', ''),
+                             placeholder="输入第一步",
+                             key="sheet_step1")
         if step1:
             st.session_state.learning_answers['step1'] = step1
 
     with col2:
-        step2 = st.text_input("第二步", value="", key="sheet_step2")
+        step2 = st.text_input("第二步",
+                             value=st.session_state.learning_answers.get('step2', ''),
+                             placeholder="输入第二步",
+                             key="sheet_step2")
         if step2:
             st.session_state.learning_answers['step2'] = step2
 
     with col3:
-        step3 = st.text_input("第三步", value="", key="sheet_step3")
+        step3 = st.text_input("第三步",
+                             value=st.session_state.learning_answers.get('step3', ''),
+                             placeholder="输入第三步",
+                             key="sheet_step3")
         if step3:
             st.session_state.learning_answers['step3'] = step3
+
+    st.markdown("""\
+<div class="learning-question">
+<p>在"第一阶段物种分类系统"下方的"总结机器学习基本过程"中验证自己的答案。</p>
+</div>
+""", unsafe_allow_html=True)
 
     # 活动2：探索个体识别模型
     st.markdown("""\
@@ -1454,6 +1528,7 @@ elif page == "学习单":
 </div>
 """, unsafe_allow_html=True)
 
+    # 任务1
     st.markdown("""\
 <div class="learning-question">
 <h4>任务1：</h4>
@@ -1461,191 +1536,194 @@ elif page == "学习单":
 </div>
 """, unsafe_allow_html=True)
 
-    # 测试结果表格 - 使用可编辑表格
+    # 测试结果表格
     st.markdown("**测试结果**")
 
-    # 创建可编辑的测试结果表格 - 根据新文档格式
-    test_results_data = {
+    # 创建任务1的测试结果表格
+    task1_data = {
         '测试数据': ['测试数据1（萌兰）', '测试数据2（萌兰）', '测试数据3（萌兰）',
                    '测试数据4（萌兰）', '测试数据5（萌兰）', '测试数据6（花花）',
-                   '测试数据7（花花）', '测试数据8（花花）', '测试数据9（花花）',
-                   '测试数据10（花花）'],
+                   '测试数据7（花花）', '测试数据8（花花）', '测试数据9（花花）', '测试数据10（花花）'],
         '萌兰类别概率': ['', '', '', '', '', '', '', '', '', ''],
         '花花类别概率': ['', '', '', '', '', '', '', '', '', ''],
         '是否正确分类（识别度高与85%）': ['', '', '', '', '', '', '', '', '', '']
     }
 
-    # 使用st.data_editor创建可编辑表格
-    edited_df = st.data_editor(
-        pd.DataFrame(test_results_data),
+    edited_task1_df = st.data_editor(
+        pd.DataFrame(task1_data),
         use_container_width=True,
         num_rows="fixed",
         key="task1_table"
     )
 
     # 准确率计算
-    col1, col2 = st.columns(2)
+    correct_count_task1 = st.number_input("正确识别个数", min_value=0, max_value=10, value=0, key="correct_count_task1")
+    total_count_task1 = st.number_input("总测试数据个数", min_value=0, max_value=10, value=10, key="total_count_task1")
 
-    with col1:
-        correct_count = st.number_input("正确识别个数", min_value=0, max_value=10, value=0, key="correct_count")
-
-    with col2:
-        total_count = st.number_input("总测试数据个数", min_value=0, max_value=10, value=10, key="total_count")
-
-    if total_count > 0:
-        accuracy = (correct_count / total_count) * 100
-        st.write(f"**准确率（正确识别个数/总测试数据个数）=（ {accuracy:.1f} ）%**")
+    if total_count_task1 > 0:
+        accuracy_task1 = (correct_count_task1 / total_count_task1) * 100
+        st.write(f"**准确率（正确识别个数/总测试数据个数）=（ {accuracy_task1:.1f} ）%**")
 
     # 结果和原因
     col1, col2 = st.columns(2)
 
     with col1:
-        individual_result = st.radio("结果：", ["能识别个体", "不能识别个体"], key="individual_result")
+        individual_result_task1 = st.radio("结果：", ["能识别个体", "不能识别个体"], key="individual_result_task1")
 
     with col2:
-        individual_reason = st.text_area("原因：",
-                                         value=st.session_state.learning_answers.get('individual_reason', ''),
-                                         placeholder="分析原因...",
-                                         height=100,
-                                         key="individual_reason")
-        if individual_reason:
-            st.session_state.learning_answers['individual_reason'] = individual_reason
+        individual_reason_task1 = st.text_area("原因：",
+                                             value=st.session_state.learning_answers.get('individual_reason_task1', ''),
+                                             placeholder="分析原因...",
+                                             height=100,
+                                             key="individual_reason_task1")
+        if individual_reason_task1:
+            st.session_state.learning_answers['individual_reason_task1'] = individual_reason_task1
 
-    # 总结
-    st.markdown("**总结：______是人工智能的核心要素，它的质量______，人工智能识别的准确率______。**")
+    # 任务1总结
+    st.markdown("**总结：_______是人工智能的核心要素，它的质量_______，人工智能识别的准确率_______。**")
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        core_element = st.text_input("核心要素",
-                                    value=st.session_state.learning_answers.get('core_element', '数据'),
-                                    key="core_element")
-        if core_element:
-            st.session_state.learning_answers['core_element'] = core_element
+        core_element_task1 = st.text_input("核心要素",
+                                          value=st.session_state.learning_answers.get('core_element_task1', ''),
+                                          placeholder="",
+                                          key="core_element_task1")
+        if core_element_task1:
+            st.session_state.learning_answers['core_element_task1'] = core_element_task1
 
     with col2:
-        quality_effect = st.text_input("质量影响",
-                                      value=st.session_state.learning_answers.get('quality_effect', '越高'),
-                                      key="quality_effect")
-        if quality_effect:
-            st.session_state.learning_answers['quality_effect'] = quality_effect
+        quality_effect_task1 = st.text_input("质量影响",
+                                            value=st.session_state.learning_answers.get('quality_effect_task1', ''),
+                                            placeholder="",
+                                            key="quality_effect_task1")
+        if quality_effect_task1:
+            st.session_state.learning_answers['quality_effect_task1'] = quality_effect_task1
 
     with col3:
-        accuracy_effect = st.text_input("准确率影响",
-                                       value=st.session_state.learning_answers.get('accuracy_effect', '越高'),
-                                       key="accuracy_effect")
-        if accuracy_effect:
-            st.session_state.learning_answers['accuracy_effect'] = accuracy_effect
-
-    st.write(f"**总结：{core_element}是人工智能的核心要素，它的质量{quality_effect}，人工智能识别的准确率{accuracy_effect}。**")
+        accuracy_effect_task1 = st.text_input("准确率影响",
+                                             value=st.session_state.learning_answers.get('accuracy_effect_task1', ''),
+                                             placeholder="",
+                                             key="accuracy_effect_task1")
+        if accuracy_effect_task1:
+            st.session_state.learning_answers['accuracy_effect_task1'] = accuracy_effect_task1
 
     # 任务2
     st.markdown("""\
 <div class="learning-question">
-<h4>任务2：选择本组的数据进行模型训练。</h4>
+<h4>任务2：分组练习，选择本组的数据进行模型训练。</h4>
 </div>
 """, unsafe_allow_html=True)
 
     st.markdown("**测试结果**")
 
-    # 创建可编辑的测试结果表格
-    edited_df2 = st.data_editor(
-        pd.DataFrame(test_results_data),
+    # 创建任务2的测试结果表格
+    task2_data = {
+        '测试数据': ['测试数据1（萌兰）', '测试数据2（萌兰）', '测试数据3（萌兰）',
+                   '测试数据4（萌兰）', '测试数据5（萌兰）', '测试数据6（花花）',
+                   '测试数据7（花花）', '测试数据8（花花）', '测试数据9（花花）', '测试数据10（花花）'],
+        '萌兰类别概率': ['', '', '', '', '', '', '', '', '', ''],
+        '花花类别概率': ['', '', '', '', '', '', '', '', '', ''],
+        '是否正确分类（识别度高与85%）': ['', '', '', '', '', '', '', '', '', '']
+    }
+
+    edited_task2_df = st.data_editor(
+        pd.DataFrame(task2_data),
         use_container_width=True,
         num_rows="fixed",
         key="task2_table"
     )
 
     # 准确率计算
-    col1, col2 = st.columns(2)
+    correct_count_task2 = st.number_input("正确识别个数", min_value=0, max_value=10, value=0, key="correct_count_task2")
+    total_count_task2 = st.number_input("总测试数据个数", min_value=0, max_value=10, value=10, key="total_count_task2")
 
-    with col1:
-        correct_count2 = st.number_input("正确识别个数", min_value=0, max_value=10, value=0, key="correct_count2")
-
-    with col2:
-        total_count2 = st.number_input("总测试数据个数", min_value=0, max_value=10, value=10, key="total_count2")
-
-    if total_count2 > 0:
-        accuracy2 = (correct_count2 / total_count2) * 100
-        st.write(f"**准确率（正确识别个数/总测试数据个数）=（ {accuracy2:.1f} ）%**")
+    if total_count_task2 > 0:
+        accuracy_task2 = (correct_count_task2 / total_count_task2) * 100
+        st.write(f"**准确率（正确识别个数/总测试数据个数）=（ {accuracy_task2:.1f} ）%**")
 
     # 结果和原因
     col1, col2 = st.columns(2)
 
     with col1:
-        individual_result2 = st.radio("结果：", ["能识别个体", "不能识别个体"], key="individual_result2")
+        individual_result_task2 = st.radio("结果：", ["能识别个体", "不能识别个体"], key="individual_result_task2")
 
     with col2:
-        individual_reason2 = st.text_area("原因：",
-                                          value=st.session_state.learning_answers.get('individual_reason2', ''),
-                                          placeholder="分析原因...",
-                                          height=100,
-                                          key="individual_reason2")
-        if individual_reason2:
-            st.session_state.learning_answers['individual_reason2'] = individual_reason2
+        individual_reason_task2 = st.text_area("原因：",
+                                             value=st.session_state.learning_answers.get('individual_reason_task2', ''),
+                                             placeholder="分析原因...",
+                                             height=100,
+                                             key="individual_reason_task2")
+        if individual_reason_task2:
+            st.session_state.learning_answers['individual_reason_task2'] = individual_reason_task2
 
-    # 总结
-    st.markdown("**总结：______是人工智能的核心要素，它的数量______，人工智能识别的准确率______。**")
+    # 任务2总结
+    st.markdown("**总结：_______是人工智能的核心要素，它的数量_______，人工智能识别的准确率_______。**")
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        core_element2 = st.text_input("核心要素",
-                                     value=st.session_state.learning_answers.get('core_element2', ''),
-                                     key="core_element2")
-        if core_element2:
-            st.session_state.learning_answers['core_element2'] = core_element2
+        core_element_task2 = st.text_input("核心要素",
+                                          value=st.session_state.learning_answers.get('core_element_task2', ''),
+                                          placeholder="",
+                                          key="core_element_task2")
+        if core_element_task2:
+            st.session_state.learning_answers['core_element_task2'] = core_element_task2
 
     with col2:
-        quantity_effect = st.text_input("数量影响",
-                                       value=st.session_state.learning_answers.get('quantity_effect', ''),
-                                       key="quantity_effect")
-        if quantity_effect:
-            st.session_state.learning_answers['quantity_effect'] = quantity_effect
+        quantity_effect_task2 = st.text_input("数量影响",
+                                             value=st.session_state.learning_answers.get('quantity_effect_task2', ''),
+                                             placeholder="",
+                                             key="quantity_effect_task2")
+        if quantity_effect_task2:
+            st.session_state.learning_answers['quantity_effect_task2'] = quantity_effect_task2
 
     with col3:
-        accuracy_effect2 = st.text_input("准确率影响",
-                                        value=st.session_state.learning_answers.get('accuracy_effect2', ''),
-                                        key="accuracy_effect2")
-        if accuracy_effect2:
-            st.session_state.learning_answers['accuracy_effect2'] = accuracy_effect2
-
-    st.write(f"**总结：{core_element2}是人工智能的核心要素，它的数量{quantity_effect}，人工智能识别的准确率{accuracy_effect2}。**")
+        accuracy_effect_task2 = st.text_input("准确率影响",
+                                             value=st.session_state.learning_answers.get('accuracy_effect_task2', ''),
+                                             placeholder="",
+                                             key="accuracy_effect_task2")
+        if accuracy_effect_task2:
+            st.session_state.learning_answers['accuracy_effect_task2'] = accuracy_effect_task2
 
     # 任务3
     st.markdown("""\
 <div class="learning-question">
-<h4>任务3：选择本组的数据进行模型训练。</h4>
+<h4>任务3：分组训练，选择本组的数据进行模型训练。</h4>
 </div>
 """, unsafe_allow_html=True)
 
-    # 创建可编辑的测试结果表格
-    edited_df3 = st.data_editor(
-        pd.DataFrame(test_results_data),
+    # 创建任务3的测试结果表格
+    task3_data = {
+        '测试数据': ['测试数据1（萌兰）', '测试数据2（萌兰）', '测试数据3（萌兰）',
+                   '测试数据4（萌兰）', '测试数据5（萌兰）', '测试数据6（花花）',
+                   '测试数据7（花花）', '测试数据8（花花）', '测试数据9（花花）', '测试数据10（花花）'],
+        '萌兰类别概率': ['', '', '', '', '', '', '', '', '', ''],
+        '花花类别概率': ['', '', '', '', '', '', '', '', '', ''],
+        '是否正确分类（识别度高与85%）': ['', '', '', '', '', '', '', '', '', '']
+    }
+
+    edited_task3_df = st.data_editor(
+        pd.DataFrame(task3_data),
         use_container_width=True,
         num_rows="fixed",
         key="task3_table"
     )
 
     # 准确率计算
-    col1, col2 = st.columns(2)
+    correct_count_task3 = st.number_input("正确识别个数", min_value=0, max_value=10, value=0, key="correct_count_task3")
+    total_count_task3 = st.number_input("总测试数据个数", min_value=0, max_value=10, value=10, key="total_count_task3")
 
-    with col1:
-        correct_count3 = st.number_input("正确识别个数", min_value=0, max_value=10, value=0, key="correct_count3")
-
-    with col2:
-        total_count3 = st.number_input("总测试数据个数", min_value=0, max_value=10, value=10, key="total_count3")
-
-    if total_count3 > 0:
-        accuracy3 = (correct_count3 / total_count3) * 100
-        st.write(f"**准确率（正确识别个数/总测试数据个数）=（ {accuracy3:.1f} ）%**")
+    if total_count_task3 > 0:
+        accuracy_task3 = (correct_count_task3 / total_count_task3) * 100
+        st.write(f"**准确率（正确识别个数/总测试数据个数）=（ {accuracy_task3:.1f} ）%**")
 
     st.markdown("**总结：**")
-    summary = st.text_area("填写总结",
-                           value=st.session_state.learning_answers.get('summary', ''),
-                           placeholder="填写任务3的总结...",
-                           height=100,
-                           key="task3_summary")
-    if summary:
-        st.session_state.learning_answers['summary'] = summary
+    summary_task3 = st.text_area("填写总结",
+                               value=st.session_state.learning_answers.get('summary_task3', ''),
+                               placeholder="填写任务3的总结...",
+                               height=100,
+                               key="task3_summary")
+    if summary_task3:
+        st.session_state.learning_answers['summary_task3'] = summary_task3
 
     st.success("**以上任务圆满完成，恭喜你成为优秀的野生动物保护AI研究员！**")
 
@@ -1708,62 +1786,63 @@ elif page == "学习单":
 
     st.markdown("**2.活动评价。(学生自我评价，根据评价结果将相应数量的五角星，五颗星为最佳成绩。)**")
 
-    # 创建评价表格
+    # 学习评价表格
     evaluation_data = {
         '描述': [
-            '(1)我觉得认识了机器学习的概念及基本流程，了解数据在人工智能领域的重要性。',
+            '(1)我觉得认识了机器学习的概念及基本过程，了解数据在人工智能领域的重要性。',
             '(2)在课堂互动环节中，我有积极地参与到课堂的互动中来。'
         ],
         '学生自评': ['☆☆☆☆☆', '☆☆☆☆☆']
     }
 
-    # 使用可编辑表格
-    evaluation_df = st.data_editor(
-        pd.DataFrame(evaluation_data),
-        use_container_width=True,
-        num_rows="fixed",
-        key="evaluation_table"
-    )
+    st.table(pd.DataFrame(evaluation_data))
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        rating1 = st.slider("(1)评分", 1, 5,
+                           value=st.session_state.learning_answers.get('rating1', 3),
+                           key="rating1")
+        st.write("⭐" * rating1)
+        st.session_state.learning_answers['rating1'] = rating1
+
+    with col2:
+        rating2 = st.slider("(2)评分", 1, 5,
+                           value=st.session_state.learning_answers.get('rating2', 3),
+                           key="rating2")
+        st.write("⭐" * rating2)
+        st.session_state.learning_answers['rating2'] = rating2
 
     # 保存学习单答案
     if st.button("保存学习单答案", type="primary"):
-        # 更新所有答案到session_state
+        # 更新所有答案到session state
         st.session_state.learning_answers.update({
             'panda_features': panda_features,
             'tiger_features': tiger_features,
             'monkey_features': monkey_features,
             'ml_concept': ml_concept,
-            'panda_count': panda_count,
-            'tiger_count': tiger_count,
-            'monkey_count': monkey_count,
-            'test_count': test_count,
-            'can_recognize': can_recognize,
             'step1': step1,
             'step2': step2,
             'step3': step3,
-            'correct_count': correct_count,
-            'total_count': total_count,
-            'individual_result': individual_result,
-            'individual_reason': individual_reason,
-            'core_element': core_element,
-            'quality_effect': quality_effect,
-            'accuracy_effect': accuracy_effect,
-            'correct_count2': correct_count2,
-            'total_count2': total_count2,
-            'individual_result2': individual_result2,
-            'individual_reason2': individual_reason2,
-            'core_element2': core_element2,
-            'quantity_effect': quantity_effect,
-            'accuracy_effect2': accuracy_effect2,
-            'correct_count3': correct_count3,
-            'total_count3': total_count3,
-            'summary': summary,
+            'individual_reason_task1': individual_reason_task1,
+            'core_element_task1': core_element_task1,
+            'quality_effect_task1': quality_effect_task1,
+            'accuracy_effect_task1': accuracy_effect_task1,
+            'individual_reason_task2': individual_reason_task2,
+            'core_element_task2': core_element_task2,
+            'quantity_effect_task2': quantity_effect_task2,
+            'accuracy_effect_task2': accuracy_effect_task2,
+            'summary_task3': summary_task3,
             'key_points': key_points,
             'questions': questions,
             'ml_applications': ml_applications,
-            'harvest': harvest
+            'harvest': harvest,
+            'rating1': rating1,
+            'rating2': rating2
         })
         st.success("学习单答案已保存！")
+
+    st.markdown("</div>", unsafe_allow_html=True)  # 结束learning-sheet div
 
 # AI研究员证书页面
 elif page == "AI研究员证书":
@@ -1785,7 +1864,7 @@ elif page == "AI研究员证书":
 <p style="font-size: 1.2rem;">🎯 熟练掌握</p>
 </div>
 <div>
-<h3 style="color: #F57C00;">机器学习的基本流程</h3>
+<h3 style="color: #F57C00;">机器学习的基本过程</h3>
 <p style="font-size: 1.2rem;">🎯 实践应用</p>
 </div>
 <div>
@@ -1814,5 +1893,4 @@ elif page == "AI研究员证书":
         "<div style='text-align: center; color: #666;'>"
         "🐾 野生动物保护组织 AI 研究部 • 用科技守护生命 🐾"
         "</div>",
-        unsafe_allow_html=True
-    )
+        unsafe_allow_html=True)
